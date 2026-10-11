@@ -11,7 +11,7 @@ header{flex-wrap:nowrap}.title{min-width:0}.title h1{white-space:nowrap}header>.
 @media(max-width:420px){header{gap:8px}.title{gap:8px}.title h1{font-size:18px}header>.primary{font-size:11px;padding:10px 12px}}
 </style></head>
 <body>
-<header><div class="title"><h1>迷路（仮）</h1><span class="version">v1.4</span></div><button id="new" class="primary">新規迷路</button></header>
+<header><div class="title"><h1>迷路（仮）</h1><span class="version">v1.5</span></div><button id="new" class="primary">新規迷路</button></header>
 <dialog id="size-dialog" aria-labelledby="size-title"><div class="dialog-heading"><h2 id="size-title">サイズ</h2><button id="close-size" class="secondary" aria-label="閉じる">×</button></div><div class="sizes" role="group" aria-label="迷路のサイズ"><button data-size="15" aria-pressed="false">小</button><button data-size="25" aria-pressed="true">中</button><button data-size="35" aria-pressed="false">大</button><button data-size="51" aria-pressed="false">巨大</button></div></dialog>
 <main>
 <div class="board"><canvas id="maze" tabindex="0" aria-label="迷路"></canvas><div id="win" class="win" hidden><h2>ゴール</h2><button id="again" class="primary">もう一度</button></div></div>
@@ -23,10 +23,10 @@ header{flex-wrap:nowrap}.title{min-width:0}.title h1{white-space:nowrap}header>.
 // player.png: 96×48, left-facing; frame 0 idle, frame 1 walking.
 const $=id=>document.getElementById(id),canvas=$('maze'),ctx=canvas.getContext('2d');
 const dirs=[[0,-1],[1,0],[0,1],[-1,0]],TILE=80,SPRITE=48,SPEED=85,ZOOM=1.6;
-let n,cells,player,start,goal,done=false,segment=null,heading=1,facing=1;
+let n,cells,player,start,goal,exitDir,done=false,segment=null,heading=1,facing=1;
 let px=40,py=40,lastTime=null,paused=false,showFootprints=false,footprints=new Map(),footDistance=0;
 let selectedSize=25,walkingSince=null,idleAt=0,modalResume=false;
-const FRAME_MS=260;
+const FRAME_MS=260,OUTSIDE=-1;
 const sprite=new Image();let spriteReady=false;
 sprite.onload=()=>{spriteReady=sprite.naturalWidth===96&&sprite.naturalHeight===48;};
 sprite.onerror=()=>{spriteReady=false;};
@@ -63,13 +63,15 @@ function generate(size,entrance,target){
  if(!reached.has(target)){const joins=[];for(const i of reached)for(const v of nearby(i))if(a[i].walls[v.d]&&!reached.has(v.j))joins.push({i,...v});const distant=joins.filter(v=>farEnough(v.i,v.j));const v=pick(distant.length?distant:joins);if(v)open(v.i,v.d,v.j);}
  return a;
 }
-function next(i,d){return i+dirs[d][0]+dirs[d][1]*n;}
+function next(i,d){if(i===goal&&d===exitDir)return OUTSIDE;return i+dirs[d][0]+dirs[d][1]*n;}
 function exits(i){return [0,1,2,3].filter(d=>!cells[i].walls[d]);}
-function center(i){return [(i%n+.5)*TILE,(Math.floor(i/n)+.5)*TILE];}
+function center(i){if(i===OUTSIDE){const [x,y]=center(goal);return [x+dirs[exitDir][0]*TILE,y+dirs[exitDir][1]*TILE];}return [(i%n+.5)*TILE,(Math.floor(i/n)+.5)*TILE];}
 function reset(){player=start;walkingSince=null;idleAt=0;[px,py]=center(player);segment=null;done=false;heading=1;facing=1;paused=false;footprints=new Map();footDistance=0;lastTime=null;$('win').hidden=true;}
 function newGame(){n=selectedSize;const middle=Math.floor(n/2);start=middle*n+middle;
- const options=[];for(let i=0;i<n*n;i++){const x=i%n,y=Math.floor(i/n);if(Math.abs(x-middle)+Math.abs(y-middle)>=Math.ceil(n*.4))options.push(i);}
- goal=options[Math.floor(Math.random()*options.length)];cells=generate(n,start,goal);reset();}
+ // Pick a random side and an opening away from the corners.
+ exitDir=Math.floor(Math.random()*4);const position=1+Math.floor(Math.random()*(n-2));
+ goal=exitDir===0?position:exitDir===1?position*n+n-1:exitDir===2?(n-1)*n+position:position*n;
+ cells=generate(n,start,goal);cells[goal].walls[exitDir]=false;reset();}
 function startWalk(now){if(walkingSince===null)walkingSince=now;idleAt=0;}
 function finishWalk(now){if(walkingSince!==null){const elapsed=Math.max(0,now-walkingSince),phase=Math.floor(elapsed/FRAME_MS);idleAt=phase%2===1?walkingSince+(phase+1)*FRAME_MS:0;}walkingSince=null;}
 function animationFrame(now){if(segment&&!paused&&walkingSince!==null)return Math.floor(Math.max(0,now-walkingSince)/FRAME_MS)%2;return now<idleAt?1:0;}
@@ -99,7 +101,7 @@ function advance(dt,now){
  const [ax,ay]=center(segment.from),[bx,by]=center(segment.to);px=ax+(bx-ax)*segment.t;py=ay+(by-ay)*segment.t;
  if(segment.t<1)break;
  const arrived=segment.to,arrivalDirection=segment.d;player=arrived;segment=null;
- if(player===goal){complete(now);break;}
+ if(player===OUTSIDE){complete(now);break;}
  const forward=exits(player).filter(d=>d!==(arrivalDirection+2)%4);
  if(forward.length===1)begin(forward[0],now);else finishWalk(now);
  
@@ -122,7 +124,8 @@ function draw(now){
  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const c=cells[y*n+x],xx=x*TILE,yy=y*TILE;const lines=[[xx,yy,xx+TILE,yy],[xx+TILE,yy,xx+TILE,yy+TILE],[xx,yy+TILE,xx+TILE,yy+TILE],[xx,yy,xx,yy+TILE]];
  c.walls.forEach((wall,d)=>{if(wall){const l=lines[d];ctx.moveTo(l[0]+offset,l[1]+offset);ctx.lineTo(l[2]+offset,l[3]+offset);}});}
  ctx.stroke();}
- const [gx,gy]=center(goal);ctx.fillStyle='#111111';ctx.fillRect(gx-25,gy-25,50,50);ctx.fillStyle='#ffffff';ctx.font='bold 10px sans-serif';ctx.textAlign='center';ctx.fillText('EXIT',gx,gy+4);
+ const [ex,ey]=center(OUTSIDE);ctx.fillStyle='#fafafa';ctx.fillRect(ex-TILE/2,ey-TILE/2,TILE,TILE);
+ const signX=ex+dirs[exitDir][1]*28,signY=ey-dirs[exitDir][0]*28;ctx.fillStyle='#111111';ctx.fillRect(signX-22,signY-9,44,18);ctx.fillStyle='#ffffff';ctx.font='bold 10px sans-serif';ctx.textAlign='center';ctx.fillText('EXIT',signX,signY+4);
  if(player===start&&!segment){ctx.fillStyle='#777777';ctx.font='10px sans-serif';ctx.textAlign='center';ctx.fillText('START',px,py+34);}
  ctx.fillStyle='#00000022';ctx.beginPath();ctx.ellipse(px,py+21,18,5,0,0,Math.PI*2);ctx.fill();
  if(spriteReady){const frame=animationFrame(now);ctx.save();ctx.translate(Math.round(px),Math.round(py));if(facing===1)ctx.scale(-1,1);ctx.drawImage(sprite,frame*48,0,48,48,-24,-24,48,48);ctx.restore();}
