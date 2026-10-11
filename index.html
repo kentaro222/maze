@@ -11,7 +11,7 @@ header{flex-wrap:nowrap}.title{min-width:0}.title h1{white-space:nowrap}header>.
 @media(max-width:420px){header{gap:8px}.title{gap:8px}.title h1{font-size:18px}header>.primary{font-size:11px;padding:10px 12px}}
 </style></head>
 <body>
-<header><div class="title"><h1>迷路（仮）</h1><span class="version">v1.6</span></div><button id="new" class="primary">新規迷路</button></header>
+<header><div class="title"><h1>迷路（仮）</h1><span class="version">v1.7</span></div><button id="new" class="primary">新規迷路</button></header>
 <dialog id="size-dialog" aria-labelledby="size-title"><div class="dialog-heading"><h2 id="size-title">サイズ</h2><button id="close-size" class="secondary" aria-label="閉じる">×</button></div><div class="sizes" role="group" aria-label="迷路のサイズ"><button data-size="15" aria-pressed="false">小</button><button data-size="25" aria-pressed="true">中</button><button data-size="35" aria-pressed="false">大</button><button data-size="51" aria-pressed="false">巨大</button></div></dialog>
 <main>
 <div class="board"><canvas id="maze" tabindex="0" aria-label="迷路"></canvas><div id="win" class="win" hidden><h2>ゴール</h2><button id="again" class="primary">もう一度</button></div></div>
@@ -27,6 +27,42 @@ let n,cells,player,start,goal,exitDir,done=false,segment=null,heading=1,facing=1
 let px=40,py=40,lastTime=null,paused=false,showFootprints=false,footprints=new Map(),footDistance=0;
 let selectedSize=25,walkingSince=null,idleAt=0,modalResume=false;
 const FRAME_MS=260,OUTSIDE=-1;
+
+const SAVE_KEY='meze-save-v1';let saveDirty=false,lastSaveAt=0;
+function markSave(){saveDirty=true;}
+function saveGame(){
+ if(!cells||!saveDirty)return;
+ try{localStorage.setItem(SAVE_KEY,JSON.stringify({schema:1,n,start,goal,exitDir,player,px,py,segment:segment?{...segment}:null,done,heading,facing,showFootprints,footDistance,
+ walls:cells.map(c=>c.walls.reduce((mask,w,d)=>mask|(w?1<<d:0),0)),footprints:Array.from(footprints.values(),p=>[p.x,p.y,p.d])}));saveDirty=false;lastSaveAt=performance.now();}catch{lastSaveAt=performance.now();/* Keep playing when storage is unavailable or full. */}
+}
+function restoreGame(){
+ try{
+ const text=localStorage.getItem(SAVE_KEY);if(!text)return false;const saved=JSON.parse(text),size=saved.n;
+ const int=Number.isInteger,dir=d=>int(d)&&d>=0&&d<4,cell=i=>int(i)&&i>=0&&i<size*size;
+ if(saved.schema!==1||![15,25,35,51].includes(size)||!cell(saved.start)||!cell(saved.goal)||!dir(saved.exitDir)||typeof saved.done!=='boolean'||typeof saved.showFootprints!=='boolean'||!dir(saved.heading)||![1,3].includes(saved.facing))return false;
+ if(saved.start!==Math.floor(size/2)*size+Math.floor(size/2)||!Array.isArray(saved.walls)||saved.walls.length!==size*size||saved.walls.some(w=>!int(w)||w<0||w>15))return false;
+ const g=saved.goal,gx=g%size,gy=Math.floor(g/size);if(!(saved.exitDir===0?gy===0:saved.exitDir===1?gx===size-1:saved.exitDir===2?gy===size-1:gx===0))return false;
+ const wall=(i,d)=>!!(saved.walls[i]&(1<<d));
+ for(let i=0;i<size*size;i++)for(let d=0;d<4;d++){const x=i%size+dirs[d][0],y=Math.floor(i/size)+dirs[d][1];if(x<0||y<0||x>=size||y>=size){if(wall(i,d)!==!(i===g&&d===saved.exitDir))return false;}else if(wall(i,d)!==wall(y*size+x,(d+2)%4))return false;}
+ const reachable=new Set([saved.start]),queue=[saved.start];for(let k=0;k<queue.length;k++)for(let d=0;d<4;d++){const i=queue[k];if(wall(i,d)||(i===g&&d===saved.exitDir))continue;const j=i+dirs[d][0]+dirs[d][1]*size;if(!reachable.has(j)){reachable.add(j);queue.push(j);}}if(reachable.size!==size*size)return false;
+ if(saved.done?(saved.player!==OUTSIDE||saved.segment!==null):!cell(saved.player))return false;
+ const pos=i=>i===OUTSIDE?[(gx+.5+dirs[saved.exitDir][0])*TILE,(gy+.5+dirs[saved.exitDir][1])*TILE]:[(i%size+.5)*TILE,(Math.floor(i/size)+.5)*TILE];
+ let expected=pos(saved.player);
+ if(saved.segment!==null){const seg=saved.segment;if(!seg||!dir(seg.d)||!Number.isFinite(seg.t)||seg.t<0||seg.t>1||!((cell(seg.from)&&cell(seg.to))||(seg.from===g&&seg.to===OUTSIDE)||(seg.from===OUTSIDE&&seg.to===g)))return false;
+ const [ax,ay]=pos(seg.from),[bx,by]=pos(seg.to);if(bx-ax!==dirs[seg.d][0]*TILE||by-ay!==dirs[seg.d][1]*TILE)return false;
+ if(cell(seg.from)&&wall(seg.from,seg.d))return false;if(seg.from===OUTSIDE&&seg.d!==(saved.exitDir+2)%4)return false;
+ if(saved.player!==seg.from&&saved.player!==seg.to)return false;
+ expected=[ax+(bx-ax)*seg.t,ay+(by-ay)*seg.t];}
+ if(!Number.isFinite(saved.px)||!Number.isFinite(saved.py)||Math.abs(saved.px-expected[0])>1e-4||Math.abs(saved.py-expected[1])>1e-4||!Number.isFinite(saved.footDistance)||saved.footDistance<0||saved.footDistance>=22)return false;
+ if(!Array.isArray(saved.footprints)||saved.footprints.length>200000||saved.footprints.some(p=>!Array.isArray(p)||p.length!==3||!Number.isFinite(p[0])||!Number.isFinite(p[1])||p[0]<-TILE||p[1]<-TILE||p[0]>(size+1)*TILE||p[1]>(size+1)*TILE||!dir(p[2])))return false;
+ n=size;selectedSize=size;start=saved.start;goal=g;exitDir=saved.exitDir;player=saved.player;px=saved.px;py=saved.py;done=saved.done;heading=saved.heading;facing=saved.facing;
+ cells=saved.walls.map(mask=>({walls:[0,1,2,3].map(d=>!!(mask&(1<<d)))}));segment=saved.segment;paused=!!segment;walkingSince=null;idleAt=0;lastTime=null;showFootprints=saved.showFootprints;footDistance=saved.footDistance;
+ footprints=new Map();for(const [x,y,d] of saved.footprints)stamp(x,y,d);
+ $('win').hidden=!done;syncFootprintsButton();document.querySelectorAll('[data-size]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.size)===n)));saveDirty=false;return true;
+ }catch{return false;}
+}
+function syncFootprintsButton(){$('footprints').setAttribute('aria-pressed',String(showFootprints));$('footprints').textContent=showFootprints?'足跡：表示':'足跡：非表示';}
+
 const sprite=new Image();let spriteReady=false;
 sprite.onload=()=>{spriteReady=sprite.naturalWidth===96&&sprite.naturalHeight===48;};
 sprite.onerror=()=>{spriteReady=false;};
@@ -66,7 +102,7 @@ function generate(size,entrance,target){
 function next(i,d){if(i===goal&&d===exitDir)return OUTSIDE;return i+dirs[d][0]+dirs[d][1]*n;}
 function exits(i){return [0,1,2,3].filter(d=>!cells[i].walls[d]);}
 function center(i){if(i===OUTSIDE){const [x,y]=center(goal);return [x+dirs[exitDir][0]*TILE,y+dirs[exitDir][1]*TILE];}return [(i%n+.5)*TILE,(Math.floor(i/n)+.5)*TILE];}
-function reset(){player=start;walkingSince=null;idleAt=0;[px,py]=center(player);segment=null;done=false;heading=1;facing=1;paused=false;footprints=new Map();footDistance=0;lastTime=null;$('win').hidden=true;}
+function reset(){player=start;walkingSince=null;idleAt=0;[px,py]=center(player);segment=null;done=false;heading=1;facing=1;paused=false;footprints=new Map();footDistance=0;lastTime=null;$('win').hidden=true;markSave();saveGame();}
 function newGame(){n=selectedSize;const middle=Math.floor(n/2);start=middle*n+middle;
  // Pick a random side and an opening away from the corners.
  exitDir=Math.floor(Math.random()*4);const position=1+Math.floor(Math.random()*(n-2));
@@ -76,7 +112,7 @@ function startWalk(now){if(walkingSince===null)walkingSince=now;idleAt=0;}
 function finishWalk(now){if(walkingSince!==null){const elapsed=Math.max(0,now-walkingSince),phase=Math.floor(elapsed/FRAME_MS);idleAt=phase%2===1?walkingSince+(phase+1)*FRAME_MS:0;}walkingSince=null;}
 function animationFrame(now){if(segment&&!paused&&walkingSince!==null)return Math.floor(Math.max(0,now-walkingSince)/FRAME_MS)%2;return now<idleAt?1:0;}
 function begin(d,now=performance.now()){if(done||cells[player].walls[d])return false;paused=false;startWalk(now);heading=d;if(d===1||d===3)facing=d;segment={from:player,to:next(player,d),d,t:0};return true;}
-function command(d){
+function command(d){markSave();
  if(done)return;
  if(segment){
  if(d===segment.d){paused=false;startWalk(performance.now());return;}
@@ -89,9 +125,9 @@ function command(d){
 }
 let stopButtonState=null;
 function syncStopButton(){const resume=!!segment&&paused;if(resume===stopButtonState)return;stopButtonState=resume;$('stop').innerHTML=resume?'▶<small>再開</small>':'■<small>停止</small>';$('stop').setAttribute('aria-label',resume?'再開':'停止');$('stop').title=resume?'再開':'停止';}
-function stop(){if(done)return;if(segment){if(paused){paused=false;startWalk(performance.now());}else{finishWalk(performance.now());paused=true;}}syncStopButton();}
+function stop(){if(done)return;if(segment){if(paused){paused=false;startWalk(performance.now());}else{finishWalk(performance.now());paused=true;}}syncStopButton();markSave();saveGame();}
 function stamp(x,y,d){const key=Math.round(x/4)+','+Math.round(y/4)+','+d;footprints.set(key,{x,y,d});}
-function complete(now=performance.now()){finishWalk(now);done=true;segment=null;$('win').hidden=false;}
+function complete(now=performance.now()){finishWalk(now);done=true;segment=null;$('win').hidden=false;markSave();saveGame();}
 function advance(dt,now){
  let remaining=dt*SPEED/TILE;
  while(segment&&!paused&&remaining>0){const move=Math.min(remaining,1-segment.t),oldT=segment.t;segment.t+=move;remaining-=move;
@@ -136,18 +172,20 @@ function draw(now){
  // Fixed center viewport; only the immediate neighborhood is visible.
  const vignette=ctx.createRadialGradient(w/2,h/2,Math.min(w,h)*.28,w/2,h/2,Math.max(w,h)*.7);vignette.addColorStop(0,'#00000000');vignette.addColorStop(1,'#00000022');ctx.fillStyle=vignette;ctx.fillRect(0,0,w,h);
 }
-function tick(now){const dt=lastTime===null?0:Math.min((now-lastTime)/1000,.05);lastTime=now;if(segment&&!paused&&!done)advance(dt,now);syncStopButton();draw(now);requestAnimationFrame(tick);}
+function tick(now){const dt=lastTime===null?0:Math.min((now-lastTime)/1000,.05);lastTime=now;if(segment&&!paused&&!done){advance(dt,now);markSave();}if(saveDirty&&now-lastSaveAt>=750)saveGame();syncStopButton();draw(now);requestAnimationFrame(tick);}
 function openSizes(){if($('size-dialog').open)return;modalResume=!!segment&&!paused;if(modalResume)stop();$('size-dialog').showModal();}
 function closeSizes(){ $('size-dialog').close();if(modalResume&&segment&&paused)stop();modalResume=false;}
 $('new').onclick=openSizes;$('close-size').onclick=closeSizes;
 $('size-dialog').addEventListener('cancel',e=>{e.preventDefault();closeSizes();});$('again').onclick=newGame;$('reset').onclick=reset;
-$('footprints').onclick=()=>{showFootprints=!showFootprints;$('footprints').setAttribute('aria-pressed',String(showFootprints));$('footprints').textContent=showFootprints?'足跡：表示':'足跡：非表示';};
+$('footprints').onclick=()=>{showFootprints=!showFootprints;syncFootprintsButton();markSave();saveGame();};
 $('stop').onclick=stop;
  document.querySelectorAll('[data-size]').forEach(button=>button.onclick=()=>{selectedSize=Number(button.dataset.size);document.querySelectorAll('[data-size]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));modalResume=false;$('size-dialog').close();newGame();});
- document.querySelectorAll('[data-dir]').forEach(b=>b.onclick=()=>command(Number(b.dataset.dir)));
- document.addEventListener('keydown',e=>{if($('size-dialog').open)return;if(['SELECT','INPUT','TEXTAREA'].includes(e.target.tagName))return;if(e.code==='Space'){e.preventDefault();if(!e.repeat)stop();return;}const keys={ArrowUp:0,ArrowRight:1,ArrowDown:2,ArrowLeft:3,w:0,d:1,s:2,a:3};const d=keys[e.key]??keys[e.key.toLowerCase()];if(d!==undefined){e.preventDefault();if(!e.repeat)command(d);}});
+ document.querySelectorAll('[data-dir]').forEach(b=>b.onclick=()=>{command(Number(b.dataset.dir));saveGame();});
+ document.addEventListener('keydown',e=>{if($('size-dialog').open)return;if(['SELECT','INPUT','TEXTAREA'].includes(e.target.tagName))return;if(e.code==='Space'){e.preventDefault();if(!e.repeat)stop();return;}const keys={ArrowUp:0,ArrowRight:1,ArrowDown:2,ArrowLeft:3,w:0,d:1,s:2,a:3};const d=keys[e.key]??keys[e.key.toLowerCase()];if(d!==undefined){e.preventDefault();if(!e.repeat){command(d);saveGame();}}});
 
- document.addEventListener('visibilitychange',()=>{lastTime=null;});
- newGame();syncStopButton();requestAnimationFrame(tick);
+ document.addEventListener('visibilitychange',()=>{lastTime=null;if(document.visibilityState==='hidden'){markSave();saveGame();}});
+ window.addEventListener('pagehide',()=>{markSave();saveGame();});
+ window.addEventListener('beforeunload',()=>{markSave();saveGame();});
+ if(!restoreGame())newGame();syncStopButton();requestAnimationFrame(tick);
 
 </script></body></html>
