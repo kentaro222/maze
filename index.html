@@ -11,7 +11,7 @@ header{flex-wrap:nowrap}.title{min-width:0}.title h1{white-space:nowrap}header>.
 @media(max-width:420px){header{gap:8px}.title{gap:8px}.title h1{font-size:18px}header>.primary{font-size:11px;padding:10px 12px}}
 </style></head>
 <body>
-<header><div class="title"><h1>迷路（仮）</h1><span class="version">v1.5</span></div><button id="new" class="primary">新規迷路</button></header>
+<header><div class="title"><h1>迷路（仮）</h1><span class="version">v1.6</span></div><button id="new" class="primary">新規迷路</button></header>
 <dialog id="size-dialog" aria-labelledby="size-title"><div class="dialog-heading"><h2 id="size-title">サイズ</h2><button id="close-size" class="secondary" aria-label="閉じる">×</button></div><div class="sizes" role="group" aria-label="迷路のサイズ"><button data-size="15" aria-pressed="false">小</button><button data-size="25" aria-pressed="true">中</button><button data-size="35" aria-pressed="false">大</button><button data-size="51" aria-pressed="false">巨大</button></div></dialog>
 <main>
 <div class="board"><canvas id="maze" tabindex="0" aria-label="迷路"></canvas><div id="win" class="win" hidden><h2>ゴール</h2><button id="again" class="primary">もう一度</button></div></div>
@@ -110,13 +110,15 @@ function advance(dt,now){
 function resize(){const rect=canvas.getBoundingClientRect(),ratio=Math.min(devicePixelRatio||1,2);const w=Math.round(rect.width*ratio),h=Math.round(rect.height*ratio);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}return [rect.width,rect.height,ratio];}
 function draw(now){
  const [viewW,viewH,ratio]=resize();if(!viewW||!viewH)return;const w=viewW/ZOOM,h=viewH/ZOOM;ctx.setTransform(ratio*ZOOM,0,0,ratio*ZOOM,0,0);ctx.imageSmoothingEnabled=false;
- ctx.fillStyle='#dddddd';ctx.fillRect(0,0,w,h);
+ ctx.fillStyle='#fafafa';ctx.fillRect(0,0,w,h);
  const ox=w/2-px,oy=h/2-py;ctx.save();ctx.translate(ox,oy);
- const x0=Math.max(0,Math.floor(-ox/TILE)-1),x1=Math.min(n-1,Math.ceil((w-ox)/TILE));
- const y0=Math.max(0,Math.floor(-oy/TILE)-1),y1=Math.min(n-1,Math.ceil((h-oy)/TILE));
+ const groundX0=Math.floor(-ox/TILE)-1,groundX1=Math.ceil((w-ox)/TILE);
+ const x0=Math.max(0,groundX0),x1=Math.min(n-1,groundX1);
+ const groundY0=Math.floor(-oy/TILE)-1,groundY1=Math.ceil((h-oy)/TILE);
+ const y0=Math.max(0,groundY0),y1=Math.min(n-1,groundY1);
  ctx.fillStyle='#fafafa';ctx.fillRect(0,0,n*TILE,n*TILE);
  // Subtle ground pattern, without a trail that reveals the route.
- ctx.fillStyle='#e8e8e8';for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){ctx.fillRect(x*TILE+19,y*TILE+22,2,2);ctx.fillRect(x*TILE+58,y*TILE+61,2,2);}
+ ctx.fillStyle='#e8e8e8';for(let y=groundY0;y<=groundY1;y++)for(let x=groundX0;x<=groundX1;x++){ctx.fillRect(x*TILE+19,y*TILE+22,2,2);ctx.fillRect(x*TILE+58,y*TILE+61,2,2);}
  if(showFootprints){ctx.fillStyle='#909090';for(const mark of footprints.values()){if(mark.x+ox < -15 || mark.x+ox > w+15 || mark.y+oy < -15 || mark.y+oy > h+15)continue;ctx.save();ctx.translate(mark.x,mark.y);ctx.rotate(mark.d*Math.PI/2);ctx.fillRect(-8,-5,4,8);ctx.fillRect(4,1,4,8);ctx.restore();}}
  // Tall hedge-like walls: shadow, dark edge, green top.
  for(const [color,width,offset] of [['#00000020',16,5],['#111111',12,0],['#363636',7,-2]]){
@@ -124,7 +126,7 @@ function draw(now){
  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const c=cells[y*n+x],xx=x*TILE,yy=y*TILE;const lines=[[xx,yy,xx+TILE,yy],[xx+TILE,yy,xx+TILE,yy+TILE],[xx,yy+TILE,xx+TILE,yy+TILE],[xx,yy,xx,yy+TILE]];
  c.walls.forEach((wall,d)=>{if(wall){const l=lines[d];ctx.moveTo(l[0]+offset,l[1]+offset);ctx.lineTo(l[2]+offset,l[3]+offset);}});}
  ctx.stroke();}
- const [ex,ey]=center(OUTSIDE);ctx.fillStyle='#fafafa';ctx.fillRect(ex-TILE/2,ey-TILE/2,TILE,TILE);
+ const [ex,ey]=center(OUTSIDE);
  const signX=ex+dirs[exitDir][1]*28,signY=ey-dirs[exitDir][0]*28;ctx.fillStyle='#111111';ctx.fillRect(signX-22,signY-9,44,18);ctx.fillStyle='#ffffff';ctx.font='bold 10px sans-serif';ctx.textAlign='center';ctx.fillText('EXIT',signX,signY+4);
  if(player===start&&!segment){ctx.fillStyle='#777777';ctx.font='10px sans-serif';ctx.textAlign='center';ctx.fillText('START',px,py+34);}
  ctx.fillStyle='#00000022';ctx.beginPath();ctx.ellipse(px,py+21,18,5,0,0,Math.PI*2);ctx.fill();
