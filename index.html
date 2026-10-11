@@ -16,7 +16,7 @@ header,main{max-width:680px}
 canvas{position:absolute;inset:0;width:100%;height:100%}
 </style></head>
 <body>
-<header><div class="title"><h1>迷路（仮）</h1><span class="version">v1.9</span></div><button id="new" class="primary">新規迷路</button></header>
+<header><div class="title"><h1>迷路（仮）</h1><span class="version">v1.11</span></div><button id="new" class="primary">新規迷路</button></header>
 <dialog id="size-dialog" aria-labelledby="size-title"><div class="dialog-heading"><h2 id="size-title">サイズ</h2><button id="close-size" class="secondary" aria-label="閉じる">×</button></div><div class="sizes" role="group" aria-label="迷路のサイズ"><button data-size="15" aria-pressed="false">小</button><button data-size="25" aria-pressed="true">中</button><button data-size="35" aria-pressed="false">大</button><button data-size="51" aria-pressed="false">巨大</button></div></dialog>
 <main>
 <div class="board"><canvas id="maze" tabindex="0" aria-label="迷路"></canvas><div id="win" class="win" hidden><h2>ゴール</h2><button id="again" class="primary">もう一度</button></div></div>
@@ -31,7 +31,7 @@ const dirs=[[0,-1],[1,0],[0,1],[-1,0]],TILE=80,SPRITE=48,SPEED=85,ZOOM=1.6;
 let n,cells,player,start,goal,exitDir,done=false,segment=null,heading=1,facing=1;
 let px=40,py=40,lastTime=null,paused=false,showFootprints=false,footprints=new Map(),footDistance=0;
 let selectedSize=25,walkingSince=null,idleAt=0,modalResume=false;
-const FRAME_MS=260,OUTSIDE=-1;
+const FRAME_MS=260,OUTSIDE=-1,TRAIL_STEP=20;
 
 const SAVE_KEY='meze-save-v1';let saveDirty=false,lastSaveAt=0;
 function markSave(){saveDirty=true;}
@@ -61,7 +61,7 @@ function restoreGame(){
  if(!Number.isFinite(saved.px)||!Number.isFinite(saved.py)||Math.abs(saved.px-expected[0])>1e-4||Math.abs(saved.py-expected[1])>1e-4||!Number.isFinite(saved.footDistance)||saved.footDistance<0||saved.footDistance>=22)return false;
  if(!Array.isArray(saved.footprints)||saved.footprints.length>200000||saved.footprints.some(p=>!Array.isArray(p)||p.length!==3||!Number.isFinite(p[0])||!Number.isFinite(p[1])||p[0]<-TILE||p[1]<-TILE||p[0]>(size+1)*TILE||p[1]>(size+1)*TILE||!dir(p[2])))return false;
  n=size;selectedSize=size;start=saved.start;goal=g;exitDir=saved.exitDir;player=saved.player;px=saved.px;py=saved.py;done=saved.done;heading=saved.heading;facing=saved.facing;
- cells=saved.walls.map(mask=>({walls:[0,1,2,3].map(d=>!!(mask&(1<<d)))}));segment=saved.segment;paused=!!segment;walkingSince=null;idleAt=0;lastTime=null;showFootprints=saved.showFootprints;footDistance=saved.footDistance;
+ cells=saved.walls.map(mask=>({walls:[0,1,2,3].map(d=>!!(mask&(1<<d)))}));segment=saved.segment;paused=!!segment;walkingSince=null;idleAt=0;lastTime=null;showFootprints=saved.showFootprints;footDistance=saved.footDistance%TRAIL_STEP;
  footprints=new Map();for(const [x,y,d] of saved.footprints)stamp(x,y,d);
  $('win').hidden=!done;syncFootprintsButton();document.querySelectorAll('[data-size]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.size)===n)));saveDirty=false;return true;
  }catch{return false;}
@@ -132,18 +132,19 @@ let stopButtonState=null;
 function syncStopButton(){const resume=!!segment&&paused;if(resume===stopButtonState)return;stopButtonState=resume;$('stop').innerHTML=resume?'▶<small>再開</small>':'■<small>停止</small>';$('stop').setAttribute('aria-label',resume?'再開':'停止');$('stop').title=resume?'再開':'停止';}
 function stop(){if(done)return;if(segment){if(paused){paused=false;startWalk(performance.now());}else{finishWalk(performance.now());paused=true;}}syncStopButton();markSave();saveGame();}
 function stamp(x,y,d){
- // Use the same world-aligned footprint slots for either direction on an axis.
- d=d%2;if(d===1)x=Math.round(x/22)*22;else y=Math.round(y/22)*22;
- const key=Math.round(x/4)+','+Math.round(y/4)+','+d;footprints.set(key,{x,y,d});
+ // One shared grid through cell centers, including every corner.
+ const origin=TILE/2;
+ x=origin+Math.round((x-origin)/TRAIL_STEP)*TRAIL_STEP;
+ y=origin+Math.round((y-origin)/TRAIL_STEP)*TRAIL_STEP;
+ const key=x+','+y;footprints.set(key,{x,y,d:d%2});
 }
-function footprintPose(mark){return {x:mark.x,y:mark.y+(mark.d%2===1?20:0),rotation:mark.d%2*Math.PI/2};}
 function complete(now=performance.now()){finishWalk(now);done=true;segment=null;$('win').hidden=false;markSave();saveGame();}
 function advance(dt,now){
  let remaining=dt*SPEED/TILE;
  while(segment&&!paused&&remaining>0){const move=Math.min(remaining,1-segment.t),oldT=segment.t;segment.t+=move;remaining-=move;
- const distance=move*TILE;let first=22-footDistance;
- while(first<=distance){const t=oldT+first/TILE,[sx,sy]=center(segment.from);stamp(sx+dirs[segment.d][0]*t*TILE,sy+dirs[segment.d][1]*t*TILE,segment.d);first+=22;}
- footDistance=(footDistance+distance)%22;
+ const distance=move*TILE;let first=TRAIL_STEP-footDistance;
+ while(first<=distance){const t=oldT+first/TILE,[sx,sy]=center(segment.from);stamp(sx+dirs[segment.d][0]*t*TILE,sy+dirs[segment.d][1]*t*TILE,segment.d);first+=TRAIL_STEP;}
+ footDistance=(footDistance+distance)%TRAIL_STEP;
  const [ax,ay]=center(segment.from),[bx,by]=center(segment.to);px=ax+(bx-ax)*segment.t;py=ay+(by-ay)*segment.t;
  if(segment.t<1)break;
  const arrived=segment.to,arrivalDirection=segment.d;player=arrived;segment=null;
@@ -165,7 +166,7 @@ function draw(now){
  ctx.fillStyle='#fafafa';ctx.fillRect(0,0,n*TILE,n*TILE);
  // Subtle ground pattern, without a trail that reveals the route.
  ctx.fillStyle='#e8e8e8';for(let y=groundY0;y<=groundY1;y++)for(let x=groundX0;x<=groundX1;x++){ctx.fillRect(x*TILE+19,y*TILE+22,2,2);ctx.fillRect(x*TILE+58,y*TILE+61,2,2);}
- if(showFootprints){ctx.fillStyle='#909090';for(const mark of footprints.values()){if(mark.x+ox < -15 || mark.x+ox > w+15 || mark.y+oy < -15 || mark.y+oy > h+15)continue;ctx.save();const pose=footprintPose(mark);ctx.translate(pose.x,pose.y);ctx.rotate(pose.rotation);ctx.fillRect(-8,-5,4,8);ctx.fillRect(4,1,4,8);ctx.restore();}}
+ if(showFootprints){ctx.fillStyle='#00000024';for(const mark of footprints.values()){if(mark.x+ox < -4 || mark.x+ox > w+4 || mark.y+oy < -4 || mark.y+oy > h+4)continue;ctx.beginPath();ctx.arc(mark.x,mark.y,2.5,0,Math.PI*2);ctx.fill();}}
  // Tall hedge-like walls: shadow, dark edge, green top.
  for(const [color,width,offset] of [['#00000020',16,5],['#111111',12,0],['#363636',7,-2]]){
  ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='square';ctx.beginPath();
