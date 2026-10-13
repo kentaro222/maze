@@ -16,7 +16,7 @@ header,main{max-width:680px}
 canvas{position:absolute;inset:0;width:100%;height:100%}
 </style></head>
 <body>
-<header><div class="title"><h1>迷路（仮）</h1><span class="version">v1.11</span></div><button id="new" class="primary">新規迷路</button></header>
+<header><div class="title"><h1>迷路（仮）</h1><span class="version">v1.14</span></div><button id="new" class="primary">新規迷路</button></header>
 <dialog id="size-dialog" aria-labelledby="size-title"><div class="dialog-heading"><h2 id="size-title">サイズ</h2><button id="close-size" class="secondary" aria-label="閉じる">×</button></div><div class="sizes" role="group" aria-label="迷路のサイズ"><button data-size="15" aria-pressed="false">小</button><button data-size="25" aria-pressed="true">中</button><button data-size="35" aria-pressed="false">大</button><button data-size="51" aria-pressed="false">巨大</button></div></dialog>
 <main>
 <div class="board"><canvas id="maze" tabindex="0" aria-label="迷路"></canvas><div id="win" class="win" hidden><h2>ゴール</h2><button id="again" class="primary">もう一度</button></div></div>
@@ -31,7 +31,7 @@ const dirs=[[0,-1],[1,0],[0,1],[-1,0]],TILE=80,SPRITE=48,SPEED=85,ZOOM=1.6;
 let n,cells,player,start,goal,exitDir,done=false,segment=null,heading=1,facing=1;
 let px=40,py=40,lastTime=null,paused=false,showFootprints=false,footprints=new Map(),footDistance=0;
 let selectedSize=25,walkingSince=null,idleAt=0,modalResume=false;
-const FRAME_MS=260,OUTSIDE=-1,TRAIL_STEP=20;
+const FRAME_MS=260,OUTSIDE=-1,TRAIL_STEP=20;let trailDotsCache=null;
 
 const SAVE_KEY='meze-save-v1';let saveDirty=false,lastSaveAt=0;
 function markSave(){saveDirty=true;}
@@ -62,7 +62,7 @@ function restoreGame(){
  if(!Array.isArray(saved.footprints)||saved.footprints.length>200000||saved.footprints.some(p=>!Array.isArray(p)||p.length!==3||!Number.isFinite(p[0])||!Number.isFinite(p[1])||p[0]<-TILE||p[1]<-TILE||p[0]>(size+1)*TILE||p[1]>(size+1)*TILE||!dir(p[2])))return false;
  n=size;selectedSize=size;start=saved.start;goal=g;exitDir=saved.exitDir;player=saved.player;px=saved.px;py=saved.py;done=saved.done;heading=saved.heading;facing=saved.facing;
  cells=saved.walls.map(mask=>({walls:[0,1,2,3].map(d=>!!(mask&(1<<d)))}));segment=saved.segment;paused=!!segment;walkingSince=null;idleAt=0;lastTime=null;showFootprints=saved.showFootprints;footDistance=saved.footDistance%TRAIL_STEP;
- footprints=new Map();for(const [x,y,d] of saved.footprints)stamp(x,y,d);
+ footprints=new Map();trailDotsCache=null;for(const [x,y,d] of saved.footprints)stamp(x,y,d);
  $('win').hidden=!done;syncFootprintsButton();document.querySelectorAll('[data-size]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.size)===n)));saveDirty=false;return true;
  }catch{return false;}
 }
@@ -107,7 +107,7 @@ function generate(size,entrance,target){
 function next(i,d){if(i===goal&&d===exitDir)return OUTSIDE;return i+dirs[d][0]+dirs[d][1]*n;}
 function exits(i){return [0,1,2,3].filter(d=>!cells[i].walls[d]);}
 function center(i){if(i===OUTSIDE){const [x,y]=center(goal);return [x+dirs[exitDir][0]*TILE,y+dirs[exitDir][1]*TILE];}return [(i%n+.5)*TILE,(Math.floor(i/n)+.5)*TILE];}
-function reset(){player=start;walkingSince=null;idleAt=0;[px,py]=center(player);segment=null;done=false;heading=1;facing=1;paused=false;footprints=new Map();footDistance=0;lastTime=null;$('win').hidden=true;markSave();saveGame();}
+function reset(){player=start;walkingSince=null;idleAt=0;[px,py]=center(player);segment=null;done=false;heading=1;facing=1;paused=false;footprints=new Map();trailDotsCache=null;footDistance=0;lastTime=null;$('win').hidden=true;markSave();saveGame();}
 function newGame(){n=selectedSize;const middle=Math.floor(n/2);start=middle*n+middle;
  // Pick a random side and an opening away from the corners.
  exitDir=Math.floor(Math.random()*4);const position=1+Math.floor(Math.random()*(n-2));
@@ -116,7 +116,7 @@ function newGame(){n=selectedSize;const middle=Math.floor(n/2);start=middle*n+mi
 function startWalk(now){if(walkingSince===null)walkingSince=now;idleAt=0;}
 function finishWalk(now){if(walkingSince!==null){const elapsed=Math.max(0,now-walkingSince),phase=Math.floor(elapsed/FRAME_MS);idleAt=phase%2===1?walkingSince+(phase+1)*FRAME_MS:0;}walkingSince=null;}
 function animationFrame(now){if(segment&&!paused&&walkingSince!==null)return Math.floor(Math.max(0,now-walkingSince)/FRAME_MS)%2;return now<idleAt?1:0;}
-function begin(d,now=performance.now()){if(done||cells[player].walls[d])return false;paused=false;startWalk(now);heading=d;if(d===1||d===3)facing=d;segment={from:player,to:next(player,d),d,t:0};return true;}
+function begin(d,now=performance.now()){if(done||cells[player].walls[d])return false;paused=false;stamp(px,py,d);startWalk(now);heading=d;if(d===1||d===3)facing=d;segment={from:player,to:next(player,d),d,t:0};return true;}
 function command(d){markSave();
  if(done)return;
  if(segment){
@@ -136,7 +136,31 @@ function stamp(x,y,d){
  const origin=TILE/2;
  x=origin+Math.round((x-origin)/TRAIL_STEP)*TRAIL_STEP;
  y=origin+Math.round((y-origin)/TRAIL_STEP)*TRAIL_STEP;
- const key=x+','+y;footprints.set(key,{x,y,d:d%2});
+ d=d%2;const key=x+','+y+','+d;if(!footprints.has(key)){footprints.set(key,{x,y,d});trailDotsCache=null;}
+}
+function trailDots(){
+ if(trailDotsCache)return trailDotsCache;
+ const dots=new Map(),corners=new Map(),origin=TILE/2;
+ const add=(x,y)=>dots.set(x+','+y,{x,y});
+ for(const mark of footprints.values()){
+  add(mark.x,mark.y+(mark.d===1?TRAIL_STEP:0));
+  const x=origin+Math.round((mark.x-origin)/TILE)*TILE,y=origin+Math.round((mark.y-origin)/TILE)*TILE;
+  if(Math.abs(mark.x-x)<=TRAIL_STEP&&Math.abs(mark.y-y)<=TRAIL_STEP)corners.set(x+','+y,{x,y});
+ }
+ // Connect both axes at visited corners, also repairing older saved trails.
+ const has=(x,y,d)=>footprints.has(x+','+y+','+d);
+ for(const {x,y} of corners.values()){
+  const above=has(x,y-TRAIL_STEP,0),below=has(x,y+TRAIL_STEP,0);
+  const vertical=has(x,y,0)||above||below;
+  const horizontal=has(x,y,1)||has(x-TRAIL_STEP,y,1)||has(x+TRAIL_STEP,y,1);
+  if(vertical&&horizontal){
+   add(x,y+TRAIL_STEP);
+   // A lower vertical arm already meets the lowered horizontal line.
+   // Keep the center dot only when an upper arm needs that connecting step.
+   if(above)add(x,y);else dots.delete(x+','+y);
+  }
+ }
+ trailDotsCache=Array.from(dots.values());return trailDotsCache;
 }
 function complete(now=performance.now()){finishWalk(now);done=true;segment=null;$('win').hidden=false;markSave();saveGame();}
 function advance(dt,now){
@@ -147,7 +171,7 @@ function advance(dt,now){
  footDistance=(footDistance+distance)%TRAIL_STEP;
  const [ax,ay]=center(segment.from),[bx,by]=center(segment.to);px=ax+(bx-ax)*segment.t;py=ay+(by-ay)*segment.t;
  if(segment.t<1)break;
- const arrived=segment.to,arrivalDirection=segment.d;player=arrived;segment=null;
+ const arrived=segment.to,arrivalDirection=segment.d;player=arrived;stamp(px,py,arrivalDirection);segment=null;
  if(player===OUTSIDE){complete(now);break;}
  const forward=exits(player).filter(d=>d!==(arrivalDirection+2)%4);
  if(forward.length===1)begin(forward[0],now);else finishWalk(now);
@@ -166,7 +190,9 @@ function draw(now){
  ctx.fillStyle='#fafafa';ctx.fillRect(0,0,n*TILE,n*TILE);
  // Subtle ground pattern, without a trail that reveals the route.
  ctx.fillStyle='#e8e8e8';for(let y=groundY0;y<=groundY1;y++)for(let x=groundX0;x<=groundX1;x++){ctx.fillRect(x*TILE+19,y*TILE+22,2,2);ctx.fillRect(x*TILE+58,y*TILE+61,2,2);}
- if(showFootprints){ctx.fillStyle='#00000024';for(const mark of footprints.values()){if(mark.x+ox < -4 || mark.x+ox > w+4 || mark.y+oy < -4 || mark.y+oy > h+4)continue;ctx.beginPath();ctx.arc(mark.x,mark.y,2.5,0,Math.PI*2);ctx.fill();}}
+ if(showFootprints){ctx.fillStyle='#00000024';for(const dot of trailDots()){
+ if(dot.x+ox < -4 || dot.x+ox > w+4 || dot.y+oy < -4 || dot.y+oy > h+4)continue;
+ ctx.beginPath();ctx.arc(dot.x,dot.y,2.5,0,Math.PI*2);ctx.fill();}}
  // Tall hedge-like walls: shadow, dark edge, green top.
  for(const [color,width,offset] of [['#00000020',16,5],['#111111',12,0],['#363636',7,-2]]){
  ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='square';ctx.beginPath();
